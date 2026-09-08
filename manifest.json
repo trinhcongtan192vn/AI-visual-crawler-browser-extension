@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "AI Visual Generator",
+  "version": "1.0.0",
+  "description": "Tự động tạo ảnh/video minh họa cho video YouTube từ file Excel.",
+  "permissions": [
+    "downloads",
+    "storage",
+    "scripting",
+    "tabs",
+    "sidePanel",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://gemini.google.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.ts",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "src/panel/index.html"
+  },
+  "action": {
+    "default_title": "AI Visual Generator"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://gemini.google.com/*"
+      ],
+      "js": ["src/content/content-entry.ts"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "public/icons/icon16.png",
+    "48": "public/icons/icon48.png",
+    "128": "public/icons/icon128.png"
+  }
+}
