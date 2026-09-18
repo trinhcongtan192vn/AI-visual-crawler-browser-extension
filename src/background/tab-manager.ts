@@ -151,6 +151,28 @@ export async function triggerDownload(tabId: number, requestId: string, timeoutM
   }
 }
 
+export async function sendContext(
+  tabId: number,
+  req: { requestId: string; text: string },
+  timeoutMs: number
+): Promise<Extract<GenerateRes, { type: 'CONTEXT_SENT' }>> {
+  try {
+    return await sendToTab<Extract<GenerateRes, { type: 'CONTEXT_SENT' }>>(
+      tabId,
+      { type: 'SEND_CONTEXT', requestId: req.requestId, text: req.text },
+      timeoutMs
+    );
+  } catch (err) {
+    log.error('sendContext failed/timeout', err);
+    try {
+      await chrome.tabs.sendMessage(tabId, { type: 'ABORT', requestId: req.requestId });
+    } catch {
+      // tab có thể đã đóng
+    }
+    return { type: 'CONTEXT_SENT', requestId: req.requestId, ok: false, errorType: 'TIMEOUT', message: 'Hết thời gian chờ phản hồi từ content script' };
+  }
+}
+
 export async function generate(
   tabId: number,
   req: { requestId: string; prompt: string; kind: ResolvedKind; aspectRatio: AspectRatio },

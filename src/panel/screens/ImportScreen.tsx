@@ -1,12 +1,12 @@
 import { useRef, useState } from 'react';
 import { parseExcelFile, ParseError } from '../excel/parser';
-import { useStore, loadParsedFile, setParseError, goToStep } from '../store';
+import { useStore, loadParsedFile, setParseError, goToStep, setVideoContext } from '../store';
 import { createLogger } from '../../shared/logger';
 
 const log = createLogger('ImportScreen');
 
 export function ImportScreen() {
-  const { fileName, stats, fileWarnings, parseError, blocks } = useStore((s) => s);
+  const { fileName, stats, fileWarnings, parseError, blocks, config } = useStore((s) => s);
   const [dragOver, setDragOver] = useState(false);
   const [headersFound, setHeadersFound] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -62,6 +62,21 @@ export function ImportScreen() {
           }}
         />
       </div>
+
+      <fieldset className="field-group">
+        <legend>Nội dung chính của video (tùy chọn)</legend>
+        <textarea
+          className="prompt-input"
+          rows={3}
+          placeholder="VD: Video giới thiệu 5 địa điểm du lịch Đà Lạt cho giới trẻ, phong cách năng động, hài hước..."
+          value={config.videoContext ?? ''}
+          onChange={(e) => setVideoContext(e.target.value)}
+        />
+        <div className="small">
+          Nếu điền, nội dung này sẽ được gửi làm tin nhắn đầu tiên cho AI trước khi chạy block nào, để AI hiểu ngữ
+          cảnh chung của cả video. Để trống nếu không cần.
+        </div>
+      </fieldset>
 
       {parseError && (
         <div className="alert alert-error">

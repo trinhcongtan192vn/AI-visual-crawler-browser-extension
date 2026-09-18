@@ -28,13 +28,17 @@ export type GenerateReq =
   | { type: 'ABORT'; requestId: string }
   // Dùng cho đường tải B (07.2): worker đã "vũ trang" chrome.downloads.onDeterminingFilename,
   // giờ ra lệnh content script bấm nút tải chuyên dụng của trang.
-  | { type: 'TRIGGER_DOWNLOAD'; requestId: string };
+  | { type: 'TRIGGER_DOWNLOAD'; requestId: string }
+  // Gửi nội dung chính của video (nhập ở Import) làm tin nhắn đầu tiên của phiên chat,
+  // trước khi chạy block nào — không cần kết quả ảnh/video, chỉ cần gửi xong.
+  | { type: 'SEND_CONTEXT'; requestId: string; text: string };
 
 // Content script -> Worker
 export type GenerateRes =
   | { type: 'PONG'; provider: Provider; loggedIn: boolean }
   | { type: 'GENERATE_RESULT'; requestId: string; ok: true; mediaUrl: string; mediaType: 'png' | 'mp4'; captureMode: 'url' | 'page-triggered' }
   | { type: 'GENERATE_ERROR'; requestId: string; ok: false; errorType: ErrorType; message: string }
-  | { type: 'DOWNLOAD_TRIGGERED'; requestId: string; ok: boolean };
+  | { type: 'DOWNLOAD_TRIGGERED'; requestId: string; ok: boolean }
+  | { type: 'CONTEXT_SENT'; requestId: string; ok: boolean; errorType?: ErrorType; message?: string };
 
 export const PORT_NAME = 'avg-control';

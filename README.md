@@ -37,15 +37,16 @@ npm run build
 
 ## ⚠️ Giới hạn & rủi ro đã biết (đọc trước khi vận hành thật)
 
-- **Selector DOM CHƯA được xác minh trên trang thật.** `src/content/selectors.ts` chứa các
-  selector ước lượng — môi trường build này không truy cập được chatgpt.com/gemini.google.com
-  trực tiếp để kiểm chứng (yêu cầu bắt buộc ở spec `06.7`). **Trước khi chạy batch thật, bạn
-  phải**:
-  1. Mở từng trang, dùng DevTools xác định đúng selector (ô nhập prompt, nút gửi, ảnh/video kết
-     quả, nút tải, dấu hiệu rate-limit/lỗi/đang chạy...).
-  2. Sửa trực tiếp `src/content/selectors.ts`, hoặc nạp override qua
-     `chrome.storage.local` key `avg.selectors` (không cần build lại — xem `06.2`).
-  3. Test tay từng bước (M2 trong `specs/10-build-order.md`) trước khi chạy batch lớn.
+- **Selector DOM: đã xác minh luồng ẢNH trên cả ChatGPT và Gemini** (ô nhập prompt, nút gửi,
+  ảnh kết quả, lấy ảnh full-size) qua nhiều vòng test tay trực tiếp trên trang thật — xem
+  `src/content/selectors.ts` (các dòng có ghi "Xác nhận trực tiếp..."). **Vẫn CHƯA xác minh**:
+  luồng video (Veo) trên Gemini, và các marker rate-limit/lỗi/đăng xuất — nếu gặp lỗi lạ ở các
+  phần này, cần lặp lại quy trình soi DOM (DevTools → sửa `src/content/selectors.ts` hoặc nạp
+  override qua `chrome.storage.local` key `avg.selectors`, không cần build lại — xem `06.2`).
+- **Nút "Download" trên trang không phản hồi với click giả lập của extension** (nghi do trang
+  kiểm tra `event.isTrusted`, chặn hành vi tự động). Với Gemini, extension đã có cách lách: lấy
+  thẳng ảnh gốc qua URL (`lh3.googleusercontent.com/...=s0`) thay vì bấm nút. Nếu về sau trang
+  đổi domain/định dạng URL ảnh, cách này có thể cần cập nhật lại.
 - **Video (Veo) trên Gemini**: mỗi block chỉ ra **1 clip 8 giây**, có watermark hiển thị +
   SynthID vô hình, và có hạn mức/tháng theo gói tài khoản — extension tự phát hiện khi chạm hạn
   mức và dừng batch, nhưng không thể tăng hạn mức hộ bạn.

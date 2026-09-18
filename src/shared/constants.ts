@@ -11,7 +11,12 @@ export const TIMEOUTS = {
   imageDone: 120_000,          // chờ ảnh xong
   videoDone: 360_000,          // chờ video Veo xong (render lâu) — có thể tăng
   downloadComplete: 60_000,
-  pageTriggeredCapture: 20_000 // chờ bắt file do trang tự tải (07 đường B)
+  // Chờ bắt file do trang tự tải (07 đường B). Xác nhận thực tế: Gemini cần vài giây chuẩn bị
+  // ảnh full-size ở server TRƯỚC KHI download thật sự bắt đầu (không tải ngay khi bấm) — nếu
+  // để ngắn, code ngừng lắng nghe trước khi download thật sự khởi động, "mất tích" download dù
+  // Gemini vẫn tự tải xong bình thường sau đó. Đặt rộng rãi cho chắc.
+  pageTriggeredCapture: 60_000,
+  contextMessageDone: 60_000   // chờ AI trả lời xong tin nhắn ngữ cảnh đầu phiên (text thuần, nhanh hơn ảnh)
 };
 
 export const MAX_AUTO_RETRY = 2;                 // tổng 3 lần thử

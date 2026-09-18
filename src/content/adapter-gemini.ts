@@ -20,6 +20,22 @@ import { createLogger } from '../shared/logger';
 
 const log = createLogger('adapter-gemini');
 
+/**
+ * Xác nhận thực tế: ảnh Gemini tạo ra được phục vụ qua lh3.googleusercontent.com với hậu tố
+ * kích thước dạng "=s1024-rj" ở cuối URL (quy ước resize ảnh của Google). Thay bằng "=s0"
+ * (quy ước "kích thước gốc, không co") để lấy thẳng bản gốc qua URL — KHÔNG cần bấm nút tải.
+ * Đáng tin hơn hẳn đường "trang tự tải" (page-triggered): đã xác nhận nút tải giả lập bằng
+ * dispatchEvent KHÔNG kích hoạt được logic tải thật của Gemini (rất có thể trang kiểm tra
+ * event.isTrusted) — kiểm chứng bằng chrome://downloads không hề xuất hiện file nào sau khi bấm.
+ */
+function toFullSizeGoogleUserContentUrl(src: string): string | null {
+  if (!/googleusercontent\.com/.test(src)) return null;
+  if (/=s\d+(-[\w]+)?$/.test(src)) {
+    return src.replace(/=s\d+(-[\w]+)?$/, '=s0');
+  }
+  return `${src}=s0`;
+}
+
 export class GeminiAdapter implements ProviderAdapter {
   provider = 'gemini' as const;
 
@@ -69,6 +85,60 @@ export class GeminiAdapter implements ProviderAdapter {
     return true;
   }
 
+  /** Gõ text vào ô nhập rồi bấm gửi (dùng chung cho generate() và sendContext()). */
+  private async typeAndSend(sel: SelectorProfile['gemini'], input: HTMLElement, text: string, signal: AbortSignal): Promise<void> {
+    setPromptText(input, text);
+    // Nút gửi của Gemini bị disabled khi ô prompt rỗng và chỉ enable sau khi Angular nhận
+    // input (không phải tức thì) — chờ có điều kiện thay vì sleep cố định (xác nhận thực tế
+    // trên trang: button[aria-label="Send message"] disabled=false chỉ sau khi có text).
+    const sendBtn = await waitForEnabledButton(sel.sendButton, { timeoutMs: 5_000, signal });
+    if (sendBtn) {
+      humanClick(sendBtn);
+    } else {
+      log.warn('Không tìm/enable được sendButton trong 5s, fallback gửi bằng phím Enter');
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    }
+  }
+
+  async sendContext(req: {
+    text: string;
+    signal: AbortSignal;
+    selectorOverrides?: Partial<SelectorProfile> | null;
+  }): Promise<void> {
+    const sel = this.selectors(req.selectorOverrides ?? null);
+    const { signal } = req;
+
+    const input = await waitFor(() => queryFirst(sel.promptInput), {
+      timeoutMs: TIMEOUTS.promptInputReady,
+      signal
+    }).catch(() => {
+      throw new AdapterError('SELECTOR_MISS', 'Không tìm thấy ô nhập prompt Gemini (gửi ngữ cảnh đầu phiên)');
+    });
+
+    await this.typeAndSend(sel, input, req.text, signal);
+
+    await waitFor(() => (markerPresent(sel.generatingMarker) ? true : null), {
+      timeoutMs: TIMEOUTS.generationStart,
+      signal
+    }).catch(() => log.warn('generatingMarker không xuất hiện khi gửi ngữ cảnh, tiếp tục chờ trả lời xong'));
+
+    // Best-effort — không cần đọc nội dung trả lời, chỉ để không gửi chồng block đầu tiên
+    // lên trong lúc Gemini còn đang trả lời tin ngữ cảnh.
+    await waitFor(
+      () => {
+        if (markerPresent(sel.rateLimitMarker)) throw new AdapterError('RATE_LIMIT', 'Gemini báo đã đạt giới hạn');
+        if (markerPresent(sel.errorMarker)) {
+          throw new AdapterError('PROVIDER_ERROR', 'Gemini báo lỗi khi nhận tin nhắn ngữ cảnh');
+        }
+        return markerPresent(sel.generatingMarker, document) ? null : true;
+      },
+      { timeoutMs: TIMEOUTS.contextMessageDone, signal }
+    ).catch((err) => {
+      if (err instanceof AdapterError) throw err;
+      log.warn('Không xác nhận được Gemini đã trả lời xong tin nhắn ngữ cảnh trong thời gian chờ, vẫn tiếp tục batch');
+    });
+  }
+
   async generate(req: {
     requestId: string;
     prompt: string;
@@ -95,18 +165,7 @@ export class GeminiAdapter implements ProviderAdapter {
 
     const turnsBefore = queryAll(sel.turnContainer).length;
 
-    setPromptText(input, req.prompt);
-
-    // Nút gửi của Gemini bị disabled khi ô prompt rỗng và chỉ enable sau khi Angular nhận
-    // input (không phải tức thì) — chờ có điều kiện thay vì sleep cố định (xác nhận thực tế
-    // trên trang: button[aria-label="Send message"] disabled=false chỉ sau khi có text).
-    const sendBtn = await waitForEnabledButton(sel.sendButton, { timeoutMs: 5_000, signal });
-    if (sendBtn) {
-      humanClick(sendBtn);
-    } else {
-      log.warn('Không tìm/enable được sendButton trong 5s, fallback gửi bằng phím Enter');
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    }
+    await this.typeAndSend(sel, input, req.prompt, signal);
 
     await waitFor(() => (markerPresent(sel.generatingMarker) ? true : null), {
       timeoutMs: TIMEOUTS.generationStart,
@@ -129,17 +188,32 @@ export class GeminiAdapter implements ProviderAdapter {
     const resultEl = await this.waitForDone(sel, resultSelector, newestTurn, baseTimeout, signal, kind);
 
     if (kind === 'image') {
+      const img = resultEl as HTMLImageElement;
+      if (!img?.src) throw new AdapterError('SELECTOR_MISS', 'Không lấy được ảnh kết quả từ Gemini');
+
+      // Ưu tiên: đổi thẳng URL ảnh (<img src>) sang kích thước gốc — xác nhận đáng tin hơn
+      // hẳn việc bấm nút tải (nút tải giả lập KHÔNG kích hoạt được logic tải thật của Gemini,
+      // nghi do trang kiểm tra event.isTrusted — xác nhận qua chrome://downloads không hề
+      // xuất hiện file nào sau khi bấm). Không cần round-trip message, không phụ thuộc DOM
+      // còn sống hay không tại thời điểm bấm.
+      const fullSizeUrl = toFullSizeGoogleUserContentUrl(img.src);
+      if (fullSizeUrl) {
+        return { mediaUrl: fullSizeUrl, mediaType: 'png', captureMode: 'url' };
+      }
+
       const downloadBtn = queryFirst(sel.imageDownloadButton, newestTurn);
       if (downloadBtn instanceof HTMLAnchorElement && downloadBtn.href) {
         return { mediaUrl: downloadBtn.href, mediaType: 'png', captureMode: 'url' };
       }
       if (downloadBtn) {
-        registerDownloadTrigger(req.requestId, () => humanClick(downloadBtn));
+        registerDownloadTrigger(req.requestId, () => {
+          const freshBtn = queryFirst(sel.imageDownloadButton, newestTurn) ?? downloadBtn;
+          humanClick(freshBtn);
+        });
         return { mediaUrl: '', mediaType: 'png', captureMode: 'page-triggered' };
       }
-      const img = resultEl as HTMLImageElement;
-      if (!img?.src) throw new AdapterError('SELECTOR_MISS', 'Không lấy được ảnh kết quả từ Gemini');
-      log.warn('Không có nút tải ảnh chuyên dụng, dùng <img src> — có thể là bản preview nén (06.6)');
+
+      log.warn('Không đổi được URL sang kích thước gốc và không có nút tải chuyên dụng, dùng <img src> — có thể là bản preview nén (06.6)');
       const dataUrl = await blobUrlToDataUrl(img.src);
       return { mediaUrl: dataUrl, mediaType: 'png', captureMode: 'url' };
     }
@@ -150,7 +224,10 @@ export class GeminiAdapter implements ProviderAdapter {
       return { mediaUrl: downloadBtn.href, mediaType: 'mp4', captureMode: 'url' };
     }
     if (downloadBtn) {
-      registerDownloadTrigger(req.requestId, () => humanClick(downloadBtn));
+      registerDownloadTrigger(req.requestId, () => {
+        const freshBtn = queryFirst(sel.videoDownloadButton, newestTurn) ?? downloadBtn;
+        humanClick(freshBtn);
+      });
       return { mediaUrl: '', mediaType: 'mp4', captureMode: 'page-triggered' };
     }
     const video = resultEl as HTMLVideoElement;

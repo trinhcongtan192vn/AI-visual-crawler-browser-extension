@@ -104,6 +104,72 @@ async function haltBatch(batch: BatchState, status: BatchStatus, reason: string,
   log.warn(`Batch halted: ${status} — ${reason}`);
 }
 
+/** Đảm bảo có tab provider sẵn sàng (đã mở + content script phản hồi + đã đăng nhập); tự halt batch khi không đạt. */
+async function ensureTabReady(batch: BatchState, job?: Job): Promise<number | null> {
+  let tabId: number;
+  try {
+    tabId = await tabManager.ensureProviderTab(batch.config.provider);
+  } catch (err) {
+    await haltBatch(batch, 'needs_attention', `Không mở được tab ${batch.config.provider}: ${(err as Error).message}`, job);
+    return null;
+  }
+
+  const ready = await tabManager.ping(tabId);
+  if (!ready.ok) {
+    await haltBatch(
+      batch,
+      'needs_attention',
+      `Không kết nối được với tab ${batch.config.provider} (content script không phản hồi). Hãy tải lại (F5) tab đó rồi bấm Tiếp tục.`,
+      job
+    );
+    return null;
+  }
+  if (!ready.loggedIn) {
+    await haltBatch(batch, 'needs_attention', `Chưa đăng nhập ${batch.config.provider}`, job);
+    return null;
+  }
+  return tabId;
+}
+
+/**
+ * Gửi nội dung chính của video (nhập ở Import) làm tin nhắn đầu tiên của phiên chat, trước
+ * khi chạy block nào. Chỉ chạy một lần cho cả batch (đánh dấu batch.contextSent) — không
+ * chạy lại khi resume. Lỗi cấp phiên (RATE_LIMIT/NOT_LOGGED_IN) vẫn dừng batch như bình
+ * thường; lỗi khác (VD selector miss) không chặn batch vì đây là bước tùy chọn — chỉ cảnh
+ * báo rồi chạy tiếp không có ngữ cảnh.
+ * @returns false nếu batch bị halt (runLoop phải dừng ngay), true nếu có thể chạy tiếp.
+ */
+async function sendVideoContextIfNeeded(batch: BatchState): Promise<boolean> {
+  const text = batch.config.videoContext?.trim();
+  if (!text || batch.contextSent) return true;
+
+  const tabId = await ensureTabReady(batch);
+  if (tabId === null) return false;
+
+  const requestId = crypto.randomUUID();
+  const res = await tabManager.sendContext(tabId, { requestId, text }, TIMEOUTS.contextMessageDone);
+
+  if (res.ok) {
+    batch.contextSent = true;
+    await persistAndBroadcast(batch);
+    return true;
+  }
+
+  if (res.errorType === 'RATE_LIMIT') {
+    await haltBatch(batch, 'stopped_rate_limit', `Bị giới hạn bởi ${batch.config.provider} khi gửi ngữ cảnh đầu phiên`);
+    return false;
+  }
+  if (res.errorType === 'NOT_LOGGED_IN') {
+    await haltBatch(batch, 'needs_attention', 'Phiên đăng nhập hết hạn khi gửi ngữ cảnh đầu phiên');
+    return false;
+  }
+
+  log.warn(`Gửi ngữ cảnh đầu phiên thất bại (${res.errorType}: ${res.message}) — tiếp tục batch không có ngữ cảnh`);
+  batch.contextSent = true; // đã thử — không lặp lại lỗi này ở mỗi lần resume
+  await persistAndBroadcast(batch);
+  return true;
+}
+
 async function saveResult(
   batch: BatchState,
   job: Job,
@@ -125,6 +191,9 @@ async function runLoop(batch: BatchState): Promise<void> {
   loopRunning = true;
   startKeepAlive();
   try {
+    if (batch.status !== 'running') return;
+    if (!(await sendVideoContextIfNeeded(batch))) return; // đã halt bên trong nếu false
+
     while (batch.currentIndex < batch.jobs.length) {
       if (batch.status !== 'running') return;
       const job = batch.jobs[batch.currentIndex];
@@ -136,28 +205,8 @@ async function runLoop(batch: BatchState): Promise<void> {
 
       setJob(job, 'running');
 
-      let tabId: number;
-      try {
-        tabId = await tabManager.ensureProviderTab(batch.config.provider);
-      } catch (err) {
-        await haltBatch(batch, 'needs_attention', `Không mở được tab ${batch.config.provider}: ${(err as Error).message}`, job);
-        return;
-      }
-
-      const ready = await tabManager.ping(tabId);
-      if (!ready.ok) {
-        await haltBatch(
-          batch,
-          'needs_attention',
-          `Không kết nối được với tab ${batch.config.provider} (content script không phản hồi). Hãy tải lại (F5) tab đó rồi bấm Tiếp tục.`,
-          job
-        );
-        return;
-      }
-      if (!ready.loggedIn) {
-        await haltBatch(batch, 'needs_attention', `Chưa đăng nhập ${batch.config.provider}`, job);
-        return;
-      }
+      const tabId = await ensureTabReady(batch, job);
+      if (tabId === null) return;
 
       const requestId = crypto.randomUUID();
       const res = await tabManager.generate(

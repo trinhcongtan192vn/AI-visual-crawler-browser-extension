@@ -61,6 +61,12 @@ export interface RunConfig {
   };
   promptPrefix?: string;         // style chung, chèn đầu prompt
   promptSuffix?: string;
+  /**
+   * Nội dung chính của video, nhập ở màn Import (tùy chọn). Nếu có, được gửi làm TIN NHẮN
+   * ĐẦU TIÊN của phiên chat trước khi chạy block nào — cho AI ngữ cảnh chung. Nếu để trống,
+   * bỏ qua bước này hoàn toàn.
+   */
+  videoContext?: string;
 }
 
 export interface Job {
@@ -95,6 +101,8 @@ export interface BatchState {
   updatedAt: number;
   attentionReason?: string;      // khi status = needs_attention / stopped_rate_limit
   manifestRecords: ManifestRecord[];
+  /** true sau khi đã gửi (hoặc thử gửi xong) config.videoContext làm tin nhắn đầu — tránh gửi lại khi resume. */
+  contextSent?: boolean;
 }
 
 export interface ManifestRecord {

@@ -20,6 +20,16 @@ export interface ProviderAdapter {
     signal: AbortSignal;
     selectorOverrides?: Partial<SelectorProfile> | null;
   }): Promise<GenerateOutcome>;
+  /**
+   * Gửi một tin nhắn văn bản thuần (không cần lấy kết quả ảnh/video) — dùng để gửi nội dung
+   * chính của video làm tin nhắn đầu phiên chat trước khi chạy block nào. Throw AdapterError
+   * khi lỗi; không throw UNSUPPORTED (mọi provider đều gửi được tin nhắn text thường).
+   */
+  sendContext(req: {
+    text: string;
+    signal: AbortSignal;
+    selectorOverrides?: Partial<SelectorProfile> | null;
+  }): Promise<void>;
 }
 
 export class AdapterError extends Error {

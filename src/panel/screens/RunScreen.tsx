@@ -35,6 +35,12 @@ export function RunScreen() {
 
       <div className={`batch-status batch-status-${batch.status}`}>{BATCH_STATUS_LABEL[batch.status]}</div>
 
+      {batch.config.videoContext?.trim() && (
+        <div className="small" style={{ marginBottom: 8 }}>
+          Ngữ cảnh video: {batch.contextSent ? 'đã gửi làm tin nhắn đầu phiên' : 'sẽ gửi làm tin nhắn đầu phiên trước block đầu tiên'}
+        </div>
+      )}
+
       <ProgressBar done={batch.counters.done} failed={batch.counters.failed} skipped={batch.counters.skipped} total={batch.counters.total} />
 
       {(batch.status === 'stopped_rate_limit' || batch.status === 'needs_attention') && batch.attentionReason && (

@@ -32,6 +32,58 @@ export class ChatGptAdapter implements ProviderAdapter {
     return !markerPresent(sel.loggedOutMarker);
   }
 
+  /** Gõ text vào ô nhập rồi bấm gửi (dùng chung cho generate() và sendContext()). */
+  private async typeAndSend(sel: SelectorProfile['chatgpt'], input: HTMLElement, text: string, signal: AbortSignal): Promise<void> {
+    setPromptText(input, text);
+    const sendBtn = await waitForEnabledButton(sel.sendButton, { timeoutMs: 5_000, signal });
+    if (sendBtn) {
+      humanClick(sendBtn);
+    } else {
+      log.warn('Không tìm/enable được sendButton trong 5s, fallback gửi bằng phím Enter');
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    }
+  }
+
+  async sendContext(req: {
+    text: string;
+    signal: AbortSignal;
+    selectorOverrides?: Partial<SelectorProfile> | null;
+  }): Promise<void> {
+    const sel = this.selectors(req.selectorOverrides ?? null);
+    const { signal } = req;
+
+    const input = await waitFor(() => queryFirst(sel.promptInput), {
+      timeoutMs: TIMEOUTS.promptInputReady,
+      signal
+    }).catch(() => {
+      throw new AdapterError('SELECTOR_MISS', 'Không tìm thấy ô nhập prompt ChatGPT (gửi ngữ cảnh đầu phiên)');
+    });
+
+    await this.typeAndSend(sel, input, req.text, signal);
+
+    // Chờ bắt đầu chạy (best-effort, giống generate()).
+    await waitFor(() => (markerPresent(sel.generatingMarker) ? true : null), {
+      timeoutMs: TIMEOUTS.generationStart,
+      signal
+    }).catch(() => log.warn('generatingMarker không xuất hiện khi gửi ngữ cảnh, tiếp tục chờ trả lời xong'));
+
+    // Chờ AI trả lời xong (best-effort) — không cần đọc nội dung, chỉ để không gửi chồng
+    // block đầu tiên lên trong lúc AI còn đang trả lời tin ngữ cảnh.
+    await waitFor(
+      () => {
+        if (markerPresent(sel.rateLimitMarker)) throw new AdapterError('RATE_LIMIT', 'ChatGPT báo đã đạt giới hạn');
+        if (markerPresent(sel.errorMarker, document)) {
+          throw new AdapterError('PROVIDER_ERROR', 'ChatGPT báo lỗi khi nhận tin nhắn ngữ cảnh');
+        }
+        return markerPresent(sel.generatingMarker) ? null : true;
+      },
+      { timeoutMs: TIMEOUTS.contextMessageDone, signal }
+    ).catch((err) => {
+      if (err instanceof AdapterError) throw err;
+      log.warn('Không xác nhận được ChatGPT đã trả lời xong tin nhắn ngữ cảnh trong thời gian chờ, vẫn tiếp tục batch');
+    });
+  }
+
   async generate(req: {
     requestId: string;
     prompt: string;
@@ -59,17 +111,7 @@ export class ChatGptAdapter implements ProviderAdapter {
     // — cách này không phụ thuộc việc đoán đúng cấu trúc container.
     const priorImageSrcs = new Set(queryAll(sel.resultImage).map((el) => (el as HTMLImageElement).src));
 
-    setPromptText(input, req.prompt);
-
-    // Chờ nút gửi enable thay vì sleep cố định (nhiều app chỉ enable sau khi nhận input,
-    // xem giải thích chi tiết ở adapter-gemini.ts — cùng vấn đề, khác trang).
-    const sendBtn = await waitForEnabledButton(sel.sendButton, { timeoutMs: 5_000, signal });
-    if (sendBtn) {
-      humanClick(sendBtn);
-    } else {
-      log.warn('Không tìm/enable được sendButton trong 5s, fallback gửi bằng phím Enter');
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    }
+    await this.typeAndSend(sel, input, req.prompt, signal);
 
     // Chờ bắt đầu chạy (best-effort — nếu render quá nhanh có thể bỏ lỡ marker).
     await waitFor(() => (markerPresent(sel.generatingMarker) ? true : null), {
@@ -100,7 +142,13 @@ export class ChatGptAdapter implements ProviderAdapter {
       return { mediaUrl: downloadBtn.href, mediaType: 'png', captureMode: 'url' };
     }
     if (downloadBtn) {
-      registerDownloadTrigger(req.requestId, () => humanClick(downloadBtn));
+      // TRIGGER_DOWNLOAD chỉ tới SAU một round-trip message — tìm lại nút ngay tại thời
+      // điểm bấm thay vì dùng lại tham chiếu cũ, phòng khi DOM render lại trong lúc chờ
+      // (xem giải thích chi tiết ở adapter-gemini.ts, nơi lỗi này đã xảy ra thật).
+      registerDownloadTrigger(req.requestId, () => {
+        const freshBtn = queryFirst(sel.downloadButton) ?? downloadBtn;
+        humanClick(freshBtn);
+      });
       return { mediaUrl: '', mediaType: 'png', captureMode: 'page-triggered' };
     }
 

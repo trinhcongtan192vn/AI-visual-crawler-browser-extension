@@ -59,6 +59,27 @@ if (!provider) {
         return;
       }
 
+      if (msg.type === 'SEND_CONTEXT') {
+        const controller = new AbortController();
+        abortControllers.set(msg.requestId, controller);
+        try {
+          log.info(`[${msg.requestId}] sendContext start`);
+          await adapter.sendContext({ text: msg.text, signal: controller.signal, selectorOverrides: overrides });
+          log.info(`[${msg.requestId}] sendContext ok`);
+          const res: GenerateRes = { type: 'CONTEXT_SENT', requestId: msg.requestId, ok: true };
+          sendResponse(res);
+        } catch (err) {
+          const errorType = err instanceof AdapterError ? err.errorType : 'UNKNOWN';
+          const message = err instanceof Error ? err.message : String(err);
+          log.error(`[${msg.requestId}] sendContext failed`, errorType, message);
+          const res: GenerateRes = { type: 'CONTEXT_SENT', requestId: msg.requestId, ok: false, errorType, message };
+          sendResponse(res);
+        } finally {
+          abortControllers.delete(msg.requestId);
+        }
+        return;
+      }
+
       if (msg.type === 'GENERATE') {
         const controller = new AbortController();
         abortControllers.set(msg.requestId, controller);

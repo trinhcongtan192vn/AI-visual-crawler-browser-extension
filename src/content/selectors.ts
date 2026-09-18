@@ -158,6 +158,8 @@ export const DEFAULT_SELECTORS: SelectorProfile = {
       'video-player video'
     ],
     imageDownloadButton: [
+      // Xác nhận trực tiếp trên gemini.google.com/app ngày 2026-09-19 (hover ảnh để hiện nút).
+      'button[aria-label="Download full size image"]',
       'button[aria-label="Download image"]',
       'button[aria-label*="Tải ảnh"]',
       'a[download][href*="googleusercontent"]'

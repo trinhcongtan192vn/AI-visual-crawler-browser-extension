@@ -30,7 +30,8 @@ function defaultConfig(): RunConfig {
     aspectRatio: '16:9',
     outputFolder: 'YT_Visuals',
     interBlockDelayMs: { ...DEFAULT_INTER_BLOCK_DELAY },
-    promptTemplates: { image: DEFAULT_IMAGE_TEMPLATE, video: DEFAULT_VIDEO_TEMPLATE }
+    promptTemplates: { image: DEFAULT_IMAGE_TEMPLATE, video: DEFAULT_VIDEO_TEMPLATE },
+    videoContext: ''
   };
 }
 
@@ -113,6 +114,15 @@ export function updateConfig(patch: Partial<RunConfig>) {
   const config = { ...state.config, ...patch };
   const jobs = rebuildJobs(state.blocks, config, state.jobs);
   setState({ config, jobs });
+}
+
+/**
+ * Nội dung chính của video, nhập ở màn Import (08.2/03). Không gọi rebuildJobs như
+ * updateConfig() vì không ảnh hưởng tới prompt từng block — chỉ dùng để gửi tin nhắn đầu
+ * phiên chat khi Bắt đầu (xem queue-engine.sendVideoContextIfNeeded).
+ */
+export function setVideoContext(text: string) {
+  setState({ config: { ...state.config, videoContext: text } });
 }
 
 export function setJobPrompt(blockId: string, prompt: string) {
