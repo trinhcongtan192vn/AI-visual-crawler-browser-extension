@@ -9,7 +9,7 @@ export const TIMEOUTS = {
   promptInputReady: 15_000,
   generationStart: 20_000,     // từ lúc gửi tới lúc thấy dấu hiệu "đang chạy"
   imageDone: 120_000,          // chờ ảnh xong
-  videoDone: 360_000,          // chờ video Veo xong (render lâu) — có thể tăng
+  videoDone: 120_000,          // chờ video Veo xong — giảm từ 6 phút xuống 2 phút theo yêu cầu
   downloadComplete: 60_000,
   // Chờ bắt file do trang tự tải (07 đường B). Xác nhận thực tế: Gemini cần vài giây chuẩn bị
   // ảnh full-size ở server TRƯỚC KHI download thật sự bắt đầu (không tải ngay khi bấm) — nếu

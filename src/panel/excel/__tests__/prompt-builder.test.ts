@@ -64,6 +64,13 @@ describe('buildPrompt', () => {
     expect(job.prompt).toContain('Tiếng sóng vỗ nhẹ');
   });
 
+  it('video prompt explicitly says "Tạo video" — Gemini no longer gets an explicit model switch, so the prompt itself must signal video intent', () => {
+    const block = makeBlock({ resolvedKind: 'video' });
+    const config = makeConfig();
+    const job = createJobFromBlock(block, config);
+    expect(job.prompt).toMatch(/^Tạo video:/i);
+  });
+
   it('drops the VO context line entirely when voContent is empty, instead of leaving a dangling label', () => {
     const block = makeBlock({ voContent: undefined });
     const config = makeConfig();

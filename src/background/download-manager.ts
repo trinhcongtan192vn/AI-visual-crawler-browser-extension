@@ -63,30 +63,47 @@ export async function waitDownloadComplete(id: number, timeoutMs: number): Promi
   });
 }
 
-/** Đường A — có URL (href hoặc data URL từ content script). */
-export async function saveByUrl(url: string, fileName: string, folder: string): Promise<string> {
-  const downloadId = await chrome.downloads.download({
-    url,
-    filename: `${folder}/${fileName}`,
-    conflictAction: 'uniquify',
-    saveAs: false
-  });
-  await waitDownloadComplete(downloadId, TIMEOUTS.downloadComplete);
-  log.info(`Saved ${fileName} via URL (downloadId=${downloadId})`);
-  return fileName;
-}
-
-/** Đường B — trang tự tải, worker bắt qua onDeterminingFilename và đổi tên (07.2). */
+// Cờ dùng chung cho cả 2 đường tải — xem giải thích dưới saveByUrl().
 let expectingCapture = false;
 let pendingFileName = '';
 let pendingFolder = '';
 
+// QUAN TRỌNG: hễ có BẤT KỲ listener nào đăng ký cho onDeterminingFilename (dù listener đó im
+// lặng, không gọi suggest() cho một lượt cụ thể), Chrome sẽ KHÔNG tự quay lại dùng `filename`
+// đã truyền cho downloads.download() — nó tự chọn tên theo URL/Content-Disposition của server,
+// bỏ qua hoàn toàn tên mình yêu cầu. Xác nhận thực tế: gọi downloads.download() với
+// filename:"debug-test-video/test.mp4" cho 1 URL Google, Chrome vẫn lưu thành "video.mp4" ở
+// gốc Downloads vì server có gợi ý tên riêng. Vì vậy PHẢI luôn chủ động gọi suggest() với đúng
+// tên/fol. mong muốn cho MỌI download do extension này tạo ra — không có "đường tắt" nào an
+// toàn để mặc Chrome tự quyết định tên.
 chrome.downloads.onDeterminingFilename.addListener((_item, suggest) => {
   if (expectingCapture) {
     expectingCapture = false;
     suggest({ filename: `${pendingFolder}/${pendingFileName}`, conflictAction: 'uniquify' });
   }
 });
+
+/** Đường A — có URL (href hoặc data URL từ content script). */
+export async function saveByUrl(url: string, fileName: string, folder: string): Promise<string> {
+  pendingFileName = fileName;
+  pendingFolder = folder;
+  expectingCapture = true;
+  try {
+    const downloadId = await chrome.downloads.download({
+      url,
+      filename: `${folder}/${fileName}`,
+      conflictAction: 'uniquify',
+      saveAs: false
+    });
+    await waitDownloadComplete(downloadId, TIMEOUTS.downloadComplete);
+    log.info(`Saved ${fileName} via URL (downloadId=${downloadId})`);
+    return fileName;
+  } finally {
+    // Phòng khi onDeterminingFilename không kịp fire (lỗi trước đó) — không để cờ treo lại
+    // làm hỏng tên của lượt tải tiếp theo (kể cả tải thủ công của người dùng).
+    expectingCapture = false;
+  }
+}
 
 export async function captureNextPageTriggeredDownload(
   fileName: string,

@@ -32,6 +32,11 @@ function createDownloadsMock() {
     },
     __fireChanged(delta: { id: number; state?: { current: string } }) {
       changedListeners.slice().forEach((fn) => fn(delta));
+    },
+    __fireDetermining(item: unknown): unknown {
+      let suggestion: unknown;
+      determiningListeners.slice().forEach((fn) => fn(item, (o: unknown) => (suggestion = o)));
+      return suggestion;
     }
   };
 }
@@ -77,5 +82,45 @@ describe('captureNextPageTriggeredDownload', () => {
     downloadsMock.__fireCreated({ id: 502 }); // tới quá muộn, timeout đã hủy lắng nghe từ trước
 
     await assertion;
+  });
+});
+
+describe('saveByUrl', () => {
+  // Regression thật: gọi chrome.downloads.download({filename: "..."}) TRỰC TIẾP không đủ —
+  // xác nhận qua debug tay: Chrome bỏ qua filename mình truyền, tự lấy tên theo gợi ý của
+  // server (VD "video.mp4" từ URL) và lưu ra gốc Downloads. Lý do: bản thân việc có đăng ký
+  // onDeterminingFilename listener khiến Chrome không còn tự dùng `filename` option nữa nếu
+  // listener đó im lặng. Phải chủ động gọi suggest() với đúng tên/folder — test dưới xác nhận
+  // saveByUrl() luôn làm vậy, không dựa vào Chrome tự tôn trọng option `filename`.
+  it('explicitly claims the filename via onDeterminingFilename suggest(), not just the download() filename option', async () => {
+    downloadsMock.download.mockImplementation(async () => 42);
+
+    const promise = downloadManager.saveByUrl('https://example.com/video.mp4?filename=video.mp4', 'B01.mp4', 'YT_Visuals_test');
+
+    // Mô phỏng Chrome gọi onDeterminingFilename cho đúng download này (item.id không quan
+    // trọng với listener hiện tại vì nó chỉ dựa vào cờ expectingCapture, không lọc theo id).
+    const suggestion = downloadsMock.__fireDetermining({ id: 42, filename: 'video.mp4' });
+    expect(suggestion).toEqual({ filename: 'YT_Visuals_test/B01.mp4', conflictAction: 'uniquify' });
+
+    // Để saveByUrl() thực sự chạy qua được await download() (mock async) và đăng ký xong
+    // listener onChanged bên trong waitDownloadComplete, trước khi mình bắn sự kiện 'complete'.
+    await vi.advanceTimersByTimeAsync(0);
+    downloadsMock.__fireChanged({ id: 42, state: { current: 'complete' } });
+    const result = await promise;
+    expect(result).toBe('B01.mp4');
+  });
+
+  it('resets the capture flag even if the download itself fails, so a later unrelated download is not hijacked', async () => {
+    downloadsMock.download.mockImplementation(async () => 43);
+
+    const promise = downloadManager.saveByUrl('https://example.com/broken.mp4', 'B02.mp4', 'folder');
+    await vi.advanceTimersByTimeAsync(0);
+    downloadsMock.__fireChanged({ id: 43, state: { current: 'interrupted' } });
+    await expect(promise).rejects.toThrow();
+
+    // Sau khi saveByUrl() thất bại, một download KHÔNG LIÊN QUAN (VD người dùng tự tải tay)
+    // không được ăn theo tên/folder cũ còn sót lại.
+    const suggestion = downloadsMock.__fireDetermining({ id: 999, filename: 'unrelated.png' });
+    expect(suggestion).toBeUndefined();
   });
 });

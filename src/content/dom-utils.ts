@@ -185,14 +185,22 @@ export function clearDownloadTrigger(requestId: string): void {
 /**
  * Kiểm tra một "marker" (loggedOutMarker/rateLimitMarker/errorMarker/generatingMarker).
  * Mỗi entry được thử làm CSS selector trước (querySelector + kiểm tra hiển thị); nếu không
- * khớp, so khớp như cụm văn bản trong textContent của trang (không phân biệt hoa/thường) —
- * vì nhiều banner rate-limit/lỗi/đăng xuất không có selector ổn định.
+ * khớp, so khớp như cụm văn bản trong textContent (không phân biệt hoa/thường) — vì nhiều
+ * banner rate-limit/lỗi/đăng xuất không có selector ổn định.
+ *
+ * `root` mặc định là `document` (quét toàn trang) — dùng cho marker cấp phiên thực sự toàn
+ * cục (banner đăng xuất, toast rate-limit). Với marker CẤP BLOCK (lỗi/rate-limit riêng của
+ * MỘT câu trả lời), PHẢI truyền vào phần tử "turn mới nhất" thay vì để mặc định: nếu quét cả
+ * trang, một lỗi CŨ còn sót lại trong lịch sử chat (từ block trước) sẽ bị hiểu nhầm là lỗi của
+ * block hiện tại — bug thật đã gặp (video hết quota ở block trước làm block ảnh sau đó, dù
+ * thành công, vẫn bị báo PROVIDER_ERROR do quét trúng thông báo lỗi cũ còn trên trang).
  */
-export function markerPresent(markers: string[], root: Document = document): boolean {
+export function markerPresent(markers: string[], root: Document | HTMLElement = document): boolean {
   // Dùng textContent thay vì innerText: không phụ thuộc layout đã tính xong (innerText có thể
   // rỗng nếu gọi trước paint, hoặc trong môi trường test không render như jsdom), nên đáng tin
   // hơn cho việc phát hiện banner/thông báo trên trang thật.
-  const bodyText = (root.body?.textContent ?? '').toLowerCase();
+  const textSource = root instanceof Document ? root.body : root;
+  const bodyText = (textSource?.textContent ?? '').toLowerCase();
   for (const marker of markers) {
     try {
       const el = root.querySelector<HTMLElement>(marker);

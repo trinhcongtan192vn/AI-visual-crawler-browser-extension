@@ -29,9 +29,6 @@ export interface SelectorProfile {
   gemini: {
     promptInput: string[];
     sendButton: string[];
-    modelSwitcher: string[];
-    veoOption: string[];
-    imageModelOption: string[];
     aspectRatioControl: string[];
     resultImage: string[];
     resultVideo: string[];
@@ -120,29 +117,15 @@ export const DEFAULT_SELECTORS: SelectorProfile = {
       'div[contenteditable="true"][aria-label*="prompt" i]',
       'div.ql-editor[contenteditable="true"]'
     ],
-    // ⚠️ CHƯA xác nhận trên trang thật — không khớp trong lần soi DOM đầu (nút không có
-    // aria-label chứa "send"/"gửi"). Đang chờ user gửi lại kết quả soi trực tiếp nút gửi.
+    // Xác nhận trực tiếp trên gemini.google.com/app.
     sendButton: [
       'button[aria-label="Send message"]',
       'button[aria-label="Gửi"]',
       'button.send-button'
     ],
-    modelSwitcher: [
-      // Xác nhận: aria-label thật dạng "Open mode picker, currently Gemini Flash".
-      'button[aria-label*="mode picker" i]',
-      'button[aria-label*="model"]',
-      '.model-switcher-button',
-      'button[aria-label*="Chọn mô hình"]'
-    ],
-    veoOption: [
-      '[data-test-id*="veo"]',
-      'li:has(> span:contains("Veo"))',
-      'Veo'
-    ],
-    imageModelOption: [
-      '[data-test-id*="image"]',
-      'Imagen'
-    ],
+    // Không cần chọn model để tạo video: xác nhận thực tế chỉ cần đúng nội dung prompt là
+    // Gemini tự tạo video (không có bước chọn "Veo" riêng như PRD ban đầu giả định) — xem
+    // adapter-gemini.ts, đã bỏ hẳn bước ensureModel().
     aspectRatioControl: [
       'button[aria-label*="Aspect ratio"]',
       'button[aria-label*="Tỷ lệ khung hình"]'

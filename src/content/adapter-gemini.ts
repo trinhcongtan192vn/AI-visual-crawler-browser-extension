@@ -1,5 +1,6 @@
-// 06.5 — Adapter Gemini. Ảnh + Video (Veo). Video: chọn model, chờ lâu hơn, phân biệt
-// "đang render" vs "treo" (09.2).
+// 06.5 — Adapter Gemini. Ảnh + Video (Veo). Video không cần chọn model riêng (xác nhận thực
+// tế — chỉ cần đúng nội dung prompt), chỉ khác ảnh ở chỗ chờ lâu hơn và phân biệt "đang
+// render" vs "treo" (09.2).
 import type { AspectRatio, ResolvedKind } from '../shared/types';
 import { AdapterError, type GenerateOutcome, type ProviderAdapter } from './adapter-base';
 import { DEFAULT_SELECTORS, mergeSelectorOverrides, type SelectorProfile } from './selectors';
@@ -51,24 +52,6 @@ export class GeminiAdapter implements ProviderAdapter {
     // lộ ra ở generate() dưới dạng SELECTOR_MISS cấp block (retry được), an toàn hơn nhiều
     // so với halt cả batch với thông báo sai "chưa đăng nhập".
     return !markerPresent(sel.loggedOutMarker);
-  }
-
-  private async ensureModel(sel: SelectorProfile['gemini'], kind: ResolvedKind, signal: AbortSignal) {
-    if (kind !== 'video') return; // model ảnh mặc định giả định đã tạo được ảnh (06.5 bước 2)
-    const switcher = queryFirst(sel.modelSwitcher);
-    if (!switcher) {
-      log.warn('Không tìm thấy modelSwitcher — bỏ qua bước chọn Veo, dùng model hiện tại');
-      return;
-    }
-    humanClick(switcher);
-    const veoOption = await waitFor(() => queryFirst(sel.veoOption), { timeoutMs: 5_000, signal }).catch(
-      () => null
-    );
-    if (!veoOption) {
-      throw new AdapterError('SELECTOR_MISS', 'Không tìm thấy tùy chọn model Veo trong dropdown Gemini');
-    }
-    humanClick(veoOption);
-    await sleep(500, signal);
   }
 
   private async trySetAspectRatio(sel: SelectorProfile['gemini'], aspectRatio: AspectRatio, signal: AbortSignal) {
@@ -150,7 +133,8 @@ export class GeminiAdapter implements ProviderAdapter {
     const sel = this.selectors(req.selectorOverrides ?? null);
     const { signal, kind } = req;
 
-    await this.ensureModel(sel, kind, signal);
+    // Xác nhận thực tế: không cần chọn model — chỉ cần đúng nội dung prompt (video template ở
+    // 04) là Gemini tự tạo video, không có bước chọn "Veo" riêng như giả định ban đầu của PRD.
 
     const input = await waitFor(() => queryFirst(sel.promptInput), {
       timeoutMs: TIMEOUTS.promptInputReady,
@@ -219,6 +203,18 @@ export class GeminiAdapter implements ProviderAdapter {
     }
 
     // video
+    const video = resultEl as HTMLVideoElement;
+    const videoSrc = video?.currentSrc || video?.src;
+
+    // Xác nhận thực tế: <video>.currentSrc của Gemini là URL tải trực tiếp thật, KHÔNG phải
+    // blob: — dạng contribution.usercontent.google.com/download?...&filename=video.mp4 — tải
+    // thẳng qua chrome.downloads.download được, không cần bấm nút (cùng lý do bỏ qua nút tải
+    // ảnh: click giả lập không kích hoạt được logic tải thật của trang — xem 06.6/adapter-gemini
+    // phần ảnh).
+    if (videoSrc && !videoSrc.startsWith('blob:')) {
+      return { mediaUrl: videoSrc, mediaType: 'mp4', captureMode: 'url' };
+    }
+
     const downloadBtn = queryFirst(sel.videoDownloadButton, newestTurn);
     if (downloadBtn instanceof HTMLAnchorElement && downloadBtn.href) {
       return { mediaUrl: downloadBtn.href, mediaType: 'mp4', captureMode: 'url' };
@@ -230,10 +226,10 @@ export class GeminiAdapter implements ProviderAdapter {
       });
       return { mediaUrl: '', mediaType: 'mp4', captureMode: 'page-triggered' };
     }
-    const video = resultEl as HTMLVideoElement;
-    const src = video?.currentSrc || video?.src;
-    if (!src) throw new AdapterError('SELECTOR_MISS', 'Không lấy được video kết quả từ Gemini');
-    const dataUrl = await blobUrlToDataUrl(src);
+
+    if (!videoSrc) throw new AdapterError('SELECTOR_MISS', 'Không lấy được video kết quả từ Gemini');
+    // Chỉ còn trường hợp blob: tới đây — phải fetch ngay trong content script rồi chuyển base64.
+    const dataUrl = await blobUrlToDataUrl(videoSrc);
     return { mediaUrl: dataUrl, mediaType: 'mp4', captureMode: 'url' };
   }
 
@@ -251,8 +247,11 @@ export class GeminiAdapter implements ProviderAdapter {
     kind: ResolvedKind
   ): Promise<HTMLElement> {
     const check = () => {
-      if (markerPresent(sel.rateLimitMarker)) throw new AdapterError('RATE_LIMIT', 'Gemini báo đã đạt giới hạn');
-      if (markerPresent(sel.errorMarker)) throw new AdapterError('PROVIDER_ERROR', 'Gemini báo lỗi khi tạo');
+      // Giới hạn vào ĐÚNG turn mới nhất — không quét cả trang (xem giải thích chi tiết ở
+      // markerPresent trong dom-utils.ts): tránh bắt nhầm lỗi CŨ còn sót lại trong lịch sử
+      // chat từ một block trước đó là lỗi của block hiện tại.
+      if (markerPresent(sel.rateLimitMarker, scope)) throw new AdapterError('RATE_LIMIT', 'Gemini báo đã đạt giới hạn');
+      if (markerPresent(sel.errorMarker, scope)) throw new AdapterError('PROVIDER_ERROR', 'Gemini báo lỗi khi tạo');
       const stillGenerating = markerPresent(sel.generatingMarker, document);
       const el = queryFirst(resultSelectors, scope);
       return !stillGenerating && el ? el : null;
